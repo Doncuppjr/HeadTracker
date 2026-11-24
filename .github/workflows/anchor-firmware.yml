@@ -1,0 +1,86 @@
+name: ANCHOR C5 firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'anchor-yacht/**'
+    paths:
+      - 'ANCHOR/firmware/anchor_c5.ino'
+      - 'ANCHOR/build-firmware.sh'
+      - '.github/workflows/anchor-firmware.yml'
+  pull_request:
+    paths:
+      - 'ANCHOR/firmware/anchor_c5.ino'
+      - 'ANCHOR/build-firmware.sh'
+      - '.github/workflows/anchor-firmware.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ESP32-C5 / ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [production, debug]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+        with:
+          version: '1.6.0'
+
+      - name: Install pinned ESP32 board platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@4.0.0 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core list
+
+      - name: Build ANCHOR application image
+        run: ./ANCHOR/build-firmware.sh "${{ matrix.variant }}"
+
+      - name: Verify build profile and package
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          out="ANCHOR/dist/$VARIANT"
+          app="$out/ANCHOR-C5-$VARIANT-app.bin"
+          test -s "$app"
+          # Debug-only functionality must not leak into the production binary.
+          if [[ "$VARIANT" == production ]]; then
+            ! grep -aFq 'INJECTED_DISCONNECT previouslyConnected' "$app"
+            ! grep -aFq 'TELEMTEST queued=' "$app"
+          else
+            grep -aFq 'INJECTED_DISCONNECT previouslyConnected' "$app"
+            grep -aFq 'TELEMTEST queued=' "$app"
+          fi
+          # Both profiles must include the normal AT command and OTA page.
+          grep -aFq 'AT+OTA' "$app"
+          grep -aFq 'ANCHOR Chain' "$app"
+          (
+            cd "$out"
+            sha256sum "ANCHOR-C5-$VARIANT-app.bin" > SHA256SUMS
+            printf 'git_commit=%s\nvariant=%s\nboard=esp32:esp32:XIAO_ESP32C5\narduino_cli=1.6.0\nesp32_core=4.0.0\n' \
+              "$GITHUB_SHA" "$VARIANT" > BUILD-METADATA.txt
+          )
+
+      - name: Upload OTA application artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ANCHOR-C5-${{ matrix.variant }}-${{ github.sha }}
+          path: |
+            ANCHOR/dist/${{ matrix.variant }}/ANCHOR-C5-${{ matrix.variant }}-app.bin
+            ANCHOR/dist/${{ matrix.variant }}/SHA256SUMS
+            ANCHOR/dist/${{ matrix.variant }}/BUILD-METADATA.txt
+          if-no-files-found: error
+          retention-days: 30
