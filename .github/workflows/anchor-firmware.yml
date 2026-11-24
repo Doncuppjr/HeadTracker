@@ -5,14 +5,19 @@ on:
   push:
     branches:
       - 'anchor-yacht/**'
+      - 'feature/anchor-**'
     paths:
       - 'ANCHOR/firmware/anchor_c5.ino'
+      - 'ANCHOR/firmware/trainer_protocol.h'
+      - 'ANCHOR/tests/**'
       - 'ANCHOR/build-firmware.sh'
       - 'ANCHOR/installer/**'
       - '.github/workflows/anchor-firmware.yml'
   pull_request:
     paths:
       - 'ANCHOR/firmware/anchor_c5.ino'
+      - 'ANCHOR/firmware/trainer_protocol.h'
+      - 'ANCHOR/tests/**'
       - 'ANCHOR/build-firmware.sh'
       - 'ANCHOR/installer/**'
       - '.github/workflows/anchor-firmware.yml'
@@ -45,6 +50,11 @@ jobs:
           arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli core install esp32:esp32@4.0.0 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli core list
+
+      - name: Test trainer framing parser (host compiler)
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror ANCHOR/tests/test_trainer_protocol.cpp -o /tmp/anchor-trainer-test
+          /tmp/anchor-trainer-test
 
       - name: Build ANCHOR application image
         run: ./ANCHOR/build-firmware.sh "${{ matrix.variant }}"
@@ -141,10 +151,10 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Configure GitHub Pages
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/heads/anchor-yacht/')
         uses: actions/configure-pages@v5
       - name: Upload GitHub Pages artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/heads/anchor-yacht/')
         uses: actions/upload-pages-artifact@v3
         with:
           path: ANCHOR/site
@@ -154,7 +164,7 @@ jobs:
       pages: write
       id-token: write
     name: Deploy browser installer
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/heads/anchor-yacht/')
     needs: installer
     runs-on: ubuntu-24.04
     environment:
