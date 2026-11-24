@@ -56,6 +56,20 @@ jobs:
           out="ANCHOR/dist/$VARIANT"
           app="$out/ANCHOR-C5-$VARIANT-app.bin"
           test -s "$app"
+          full="$out/ANCHOR-C5-$VARIANT-full.bin"
+          test "$(stat -c %s "$full")" -eq 8388608
+          # ESP32-C5 merged layout: bootloader at 0x2000, partitions at
+          # 0x8000, application at 0x10000. Verify magic bytes and that the
+          # embedded application exactly matches the separately built OTA bin.
+          python3 - "$app" "$full" <<'PYVERIFY'
+          from pathlib import Path
+          import sys
+          app = Path(sys.argv[1]).read_bytes()
+          full = Path(sys.argv[2]).read_bytes()
+          assert full[0x2000] == 0xe9, 'bootloader magic missing'
+          assert full[0x8000:0x8002] == bytes([0xaa, 0x50]), 'partition table magic missing'
+          assert full[0x10000:0x10000+len(app)] == app, 'app differs from merged image'
+          PYVERIFY
           # Debug-only functionality must not leak into the production binary.
           if [[ "$VARIANT" == production ]]; then
             ! grep -aFq 'INJECTED_DISCONNECT previouslyConnected' "$app"
@@ -69,17 +83,18 @@ jobs:
           grep -aFq 'ANCHOR Chain' "$app"
           (
             cd "$out"
-            sha256sum "ANCHOR-C5-$VARIANT-app.bin" > SHA256SUMS
+            sha256sum "ANCHOR-C5-$VARIANT-app.bin" "ANCHOR-C5-$VARIANT-full.bin" > SHA256SUMS
             printf 'git_commit=%s\nvariant=%s\nboard=esp32:esp32:XIAO_ESP32C5\narduino_cli=1.6.0\nesp32_core=4.0.0\n' \
               "$GITHUB_SHA" "$VARIANT" > BUILD-METADATA.txt
           )
 
-      - name: Upload OTA application artifact
+      - name: Upload USB and OTA firmware
         uses: actions/upload-artifact@v4
         with:
           name: ANCHOR-C5-${{ matrix.variant }}-${{ github.sha }}
           path: |
             ANCHOR/dist/${{ matrix.variant }}/ANCHOR-C5-${{ matrix.variant }}-app.bin
+            ANCHOR/dist/${{ matrix.variant }}/ANCHOR-C5-${{ matrix.variant }}-full.bin
             ANCHOR/dist/${{ matrix.variant }}/SHA256SUMS
             ANCHOR/dist/${{ matrix.variant }}/BUILD-METADATA.txt
           if-no-files-found: error
