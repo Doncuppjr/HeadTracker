@@ -8,11 +8,13 @@ on:
     paths:
       - 'ANCHOR/firmware/anchor_c5.ino'
       - 'ANCHOR/build-firmware.sh'
+      - 'ANCHOR/installer/**'
       - '.github/workflows/anchor-firmware.yml'
   pull_request:
     paths:
       - 'ANCHOR/firmware/anchor_c5.ino'
       - 'ANCHOR/build-firmware.sh'
+      - 'ANCHOR/installer/**'
       - '.github/workflows/anchor-firmware.yml'
 
 permissions:
@@ -99,3 +101,63 @@ jobs:
             ANCHOR/dist/${{ matrix.variant }}/BUILD-METADATA.txt
           if-no-files-found: error
           retention-days: 30
+
+  installer:
+    name: Package browser installer
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout installer source
+        uses: actions/checkout@v4
+      - name: Download firmware images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ANCHOR-C5-*-${{ github.sha }}
+          path: ANCHOR/dist
+          merge-multiple: false
+      - name: Arrange downloaded firmware variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variant in production debug; do
+            d="ANCHOR/dist/ANCHOR-C5-$variant-${GITHUB_SHA}"
+            test -f "$d/ANCHOR-C5-$variant-full.bin"
+            mkdir -p "ANCHOR/dist/$variant"
+            cp "$d/"* "ANCHOR/dist/$variant/"
+          done
+      - name: Create GitHub Pages site
+        run: python3 ANCHOR/installer/generate-site.py --dist ANCHOR/dist --output ANCHOR/site --version "${GITHUB_SHA:0:12}"
+        shell: bash
+      - name: Check installer files
+        run: |
+          test -f ANCHOR/site/index.html
+          test -f ANCHOR/site/production/manifest.json
+          test -f ANCHOR/site/debug/manifest.json
+      - name: Publish installer site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ANCHOR-browser-installer-${{ github.sha }}
+          path: ANCHOR/site/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload GitHub Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ANCHOR/site
+
+  deploy:
+    permissions:
+      pages: write
+      id-token: write
+    name: Deploy browser installer
+    if: github.event_name != 'pull_request'
+    needs: installer
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
